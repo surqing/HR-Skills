@@ -10,6 +10,8 @@
 - fallback.pdf_text
 - fallback.docx_text
 - tencent_docs.upsert_record
+- wecom.msg
+- wecom.feedback_sync
 - 路线图依赖
 
 ## OpenClaw 打包说明
@@ -212,10 +214,6 @@ mcporter call "tencent-docs" "smartsheet.list_tables" --args '{"file_id":"your_f
 
 ---
 
-## 路线图依赖
-
-招聘事件追加、消息通知、面试日程等路线图能力尚未实现，也不属于当前发布版依赖契约。仅当对应工作流实现、测试和安全门完成后，再在本文件新增具体契约。
-
 ## ✅ candidate.search_and_summarize
 
 `candidate-search` 工作流使用。**已实现。**
@@ -243,3 +241,108 @@ python3 {baseDir}/scripts/dependency_check.py --workflow candidate-search --prob
 - 默认按固定表名 `HR候选人库` 搜索；传入 `--file-id` 时可直接读取指定表。
 - 结果默认脱敏；需要明文时显式传入 `--show-sensitive`。
 - 汇总只包含结构化统计，不包含生成式长分析。
+
+---
+
+## ✅ wecom.msg
+
+`wecom-notify` 工作流使用。**已实现。**
+
+通过官方 `@wecom/cli` 向内部 HR 或面试官发送招聘协作文本消息。默认 dry-run，不会直接发送。
+
+提供方：
+- 官方企业微信 CLI：`@wecom/cli`
+- 官方 WeCom CLI skills：`WeComTeam/wecom-cli`
+
+安装：
+
+```bash
+npm install -g @wecom/cli
+npx skills add WeComTeam/wecom-cli -y -g
+wecom-cli init
+```
+
+健康检查：
+
+```bash
+python3 {baseDir}/scripts/dependency_check.py --workflow wecom-notify
+wecom-cli msg send_message '{"chat_type":1,"chatid":"userid","msgtype":"text","text":{"content":"test"}}'
+```
+
+安全门：
+
+- `wecom_notify.py` 默认只预览。
+- 必须显式传入 `--send` 才实际调用企业微信发送接口。
+- 首版只用于内部 HR/面试官协作，不用于候选人外联。
+
+---
+
+## ✅ wecom.feedback_sync
+
+`wecom-feedback-sync` 工作流使用。**已实现。**
+
+从当前账号可见的企业微信会话读取文本面评，解析为结构化字段，写入 `HR面评记录表`，并在候选人唯一匹配时同步 `HR候选人库` 的招聘阶段。
+
+提供方：
+- 官方企业微信 CLI：`@wecom/cli`
+- 腾讯文档 MCP（`tencent-docs` 技能）
+- `mcporter` CLI
+
+前置条件：
+- 已安装并授权 `@wecom/cli`
+- 已安装 WeCom CLI skills
+- 已安装 `tencent-docs` skill
+- 已安装 `mcporter`
+- 已完成腾讯文档授权
+
+检查：
+
+```bash
+python3 {baseDir}/scripts/dependency_check.py --workflow wecom-feedback-sync
+python3 {baseDir}/scripts/dependency_check.py --workflow wecom-feedback-sync --probe-remote
+```
+
+面评表固定表名：`HR面评记录表`
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| feedback_id | 文本 | 面评记录唯一标识 |
+| candidate_name | 文本 | 候选人姓名 |
+| candidate_record_id | 文本 | 候选人库记录ID |
+| job_id | 文本 | 关联岗位ID |
+| interviewer_name | 文本 | 面试官姓名 |
+| interview_time | 日期 | 面试时间 |
+| interview_mode | 文本 | 面试方式 |
+| interview_round | 文本 | 面试轮次 |
+| interviewer_feedback | 文本 | 面评正文 |
+| interviewer_score | 数字 | 1-5 分 |
+| interviewer_notes | 文本 | 补充备注 |
+| decision | 文本 | 通过/需复试/待定/不通过 |
+| next_action | 文本 | 建议下一步 |
+| source_message_id | 文本 | 来源消息 ID 或稳定生成 ID |
+| source_conversation_id | 文本 | 来源会话 ID |
+| source_message_time | 日期 | 来源消息时间 |
+| sync_status | 文本 | 已预览/已同步/已记录/需人工确认/同步失败 |
+| created_at | 日期 | 创建时间 |
+| updated_at | 日期 | 更新时间 |
+
+关联规则：
+
+1. `candidate_record_id`
+2. 电话
+3. 邮箱
+4. 姓名 + 岗位
+5. 姓名
+
+同步规则：
+
+- `decision = 不通过`：候选人阶段更新为 `不合适`
+- `decision = 待定`：保留当前阶段
+- `decision = 通过/需复试`：按面试轮次或当前阶段推进
+- 匹配歧义：只写面评，`sync_status = 需人工确认`，不更新候选人主表
+
+---
+
+## 路线图依赖
+
+招聘事件追加、面试日程或会议创建等路线图能力尚未实现，也不属于当前发布版依赖契约。仅当对应工作流实现、测试和安全门完成后，再在本文件新增具体契约。

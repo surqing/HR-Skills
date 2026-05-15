@@ -82,6 +82,14 @@ def add_records(file_id: str, sheet_id: str, records: list[dict]) -> list[dict]:
     return result.get("records", [])
 
 
+def update_records(file_id: str, sheet_id: str, records: list[dict]) -> list[dict]:
+    """批量更新记录。"""
+    result = mcporter_call("smartsheet.update_records", {
+        "file_id": file_id, "sheet_id": sheet_id, "records": records,
+    })
+    return result.get("records", [])
+
+
 def list_records(file_id: str, sheet_id: str) -> list[dict]:
     """列出工作表所有记录。"""
     all_records = []

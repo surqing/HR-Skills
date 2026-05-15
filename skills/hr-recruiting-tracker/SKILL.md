@@ -2,9 +2,10 @@
 name: hr-recruiting-tracker
 description: >
   HR 招聘数据整理技能。用于本地解析 PDF/DOCX/TXT/Markdown 简历为 Markdown/JSON
-  简历包、生成候选人资料草稿、搜索和汇总候选人库、将确定性候选人草稿录入腾讯文档智能表格，以及初始化或维护岗位信息库。
+  简历包、生成候选人资料草稿、搜索和汇总候选人库、将确定性候选人草稿录入腾讯文档智能表格、初始化或维护岗位信息库，以及通过企业微信完成内部面试协作和面评同步。
   Use when: resume ingestion, candidate draft extraction, candidate search and summary,
-  Tencent Docs candidate upload, recruiting job table setup. 当前已实现工作流：resume-ingest、candidate-search、candidate-upload、job-management。
+  Tencent Docs candidate upload, recruiting job table setup, WeCom recruiting notifications,
+  interview feedback sync. 当前已实现工作流：resume-ingest、candidate-search、candidate-upload、job-management、wecom-notify、wecom-feedback-sync。
 version: 0.1.0
 license: MIT-0
 metadata:
@@ -27,21 +28,22 @@ metadata:
 
 ## 目的
 
-使用此技能标准化招聘数据整理。已实现四个工作流：
+使用此技能标准化招聘数据整理。已实现六个工作流：
 
 1. **`resume-ingest`**：将简历文件转换为 AI 可读的 Markdown、原始 JSON 和候选人草稿，不写入任何外部招聘系统。
 2. **`candidate-search`**：在 `HR候选人库` 中按结构化条件搜索、去重并汇总候选人记录，只读不写回。
 3. **`candidate-upload`**：将简历包中的确定性候选人草稿写入腾讯文档智能表格，支持招聘阶段跟踪；需 HR 审核的记录必须确认后才能上传。
 4. **`job-management`**：初始化或维护固定岗位信息智能表格，并可显式导入真实岗位记录。
+5. **`wecom-notify`**：通过官方 `wecom-cli` 给内部 HR/面试官发送面试确认、提醒和补充材料通知，默认 dry-run。
+6. **`wecom-feedback-sync`**：读取可见企业微信会话中的面评消息，写入独立面评表，并在明确匹配时同步候选人阶段。
 
-核心简历解析流程只依赖本地文件和 Python。腾讯文档上传和岗位库维护需要 OpenClaw 兼容 MCP 环境、`mcporter` CLI，以及已授权的 `tencent-docs` skill；高保真简历解析可选依赖 Docling，PDF 文本层回退可选依赖 `pdftotext`。引用此技能内部文件时使用 `{baseDir}`。
+核心简历解析流程只依赖本地文件和 Python。腾讯文档上传、岗位库维护和面评落表需要 OpenClaw 兼容 MCP 环境、`mcporter` CLI，以及已授权的 `tencent-docs` skill；企业微信协作需要官方 `@wecom/cli` 和已完成 `wecom-cli init`。高保真简历解析可选依赖 Docling，PDF 文本层回退可选依赖 `pdftotext`。引用此技能内部文件时使用 `{baseDir}`。
 
 ## 未来工作
 
 以下能力尚未实现，只作为路线图记录，不要承诺已经可用：
 
 - 追加招聘事件，形成完整阶段流转日志。
-- 企业微信通知。
 - 面试日程或会议创建。
 
 ## 核心规则
@@ -58,6 +60,10 @@ metadata:
 10. 教育经历必须拆分后入表：`毕业院校` 只能填学校名，`专业` 只能填专业名，`最高学历` 只能填学历，`毕业年份` 只能填年份。不要把整段教育经历写入单个字段。
 11. 终端输出默认脱敏；只有用户明确要求排查映射细节时才使用 `--show-sensitive`。
 12. `candidate-upload` 遇到 `review_required=true` 时默认禁止实际上传；HR 审核后必须显式传入 `--confirmed-reviewed`。
+13. 企业微信工作流默认只服务内部 HR/面试官协作，不做候选人外联自动化。
+14. `wecom-notify` 默认只预览；必须显式传入 `--send` 才会发消息。
+15. `wecom-feedback-sync` 默认只预览；必须显式传入 `--apply` 才会写入面评表或更新候选人阶段。
+16. 面评信息写入独立 `HR面评记录表`，候选人主表只同步当前阶段，不把长面评或摘要塞进既有主表字段。
 
 ## 工作流判定
 
@@ -65,8 +71,10 @@ metadata:
 - 如果用户要求搜索、过滤、去重或汇总已有候选人记录 → 使用 `candidate-search`。
 - 如果用户已拥有简历包，要求将候选人草稿录入腾讯文档智能表格 → 使用 `candidate-upload`。
 - 如果用户要求初始化、维护、录入或查询岗位信息库 → 使用 `job-management`。
+- 如果用户要求给 HR/面试官发送企业微信面试确认、提醒或材料通知 → 使用 `wecom-notify`。
+- 如果用户要求从企业微信回收面评、落表或同步候选人阶段 → 使用 `wecom-feedback-sync`。
 - 如果用户提供简历并直接要求"解析后录入系统" → 先执行 `resume-ingest`，再执行 `candidate-upload`。
-- 如果用户要求发送企业微信消息或安排面试 → 说明这些路线图能力尚未实现。
+- 如果用户要求安排企业微信日程或会议 → 说明面试日程/会议创建尚未实现。
 
 ## 统一表模型
 
@@ -82,6 +90,7 @@ metadata:
 |----|----------------|------|
 | candidates | HR候选人库 | 候选人核心信息、解析质量、招聘阶段 |
 | jobs | HR岗位信息库 | 岗位 JD、要求、面试流程和状态 |
+| interview_feedback | HR面评记录表 | 企业微信回收的面评、评分、结论和同步状态 |
 
 脚本和 Agent 都不得临时创造字段名。若需要新增字段，先修改该模型文件，再同步更新对应 workflow 文档和测试。
 
@@ -345,6 +354,101 @@ python3 {baseDir}/scripts/manage_jobs.py --dry-run
 | updated_at | 岗位记录更新时间 |
 
 `status` 当前使用文本字段保存，避免 `tencent-docs` 1.0.33 新建单选字段时触发 `22020` 错误。
+
+## 企业微信招聘协作 (wecom-notify / wecom-feedback-sync)
+
+运行工作流前先阅读 `references/workflow_wecom_recruiting.md`。
+
+这两个工作流使用官方 `@wecom/cli`。首版只面向内部 HR 与面试官协作，不自动联系候选人。
+
+### 安装和授权
+
+```bash
+npm install -g @wecom/cli
+npx skills add WeComTeam/wecom-cli -y -g
+wecom-cli init
+```
+
+检查：
+
+```bash
+python3 {baseDir}/scripts/dependency_check.py --workflow wecom-notify
+python3 {baseDir}/scripts/dependency_check.py --workflow wecom-feedback-sync
+```
+
+### 发送内部通知
+
+默认 dry-run，只输出预览：
+
+```bash
+python3 {baseDir}/scripts/wecom_notify.py \
+  --chat-type 1 \
+  --chatid "interviewer_userid" \
+  --kind interview-confirmation \
+  --candidate-name "张三" \
+  --job-title "Agent 开发工程师" \
+  --interview-round "技术一面" \
+  --interview-time "2026-05-12 15:00" \
+  --interview-mode "视频"
+```
+
+实际发送必须显式加：
+
+```bash
+python3 {baseDir}/scripts/wecom_notify.py ... --send
+```
+
+### 回收面评并同步
+
+离线预览消息 JSON：
+
+```bash
+python3 {baseDir}/scripts/wecom_feedback_sync.py --messages-json "/path/to/messages.json"
+```
+
+从可见会话拉取最近 7 天内消息并预览：
+
+```bash
+python3 {baseDir}/scripts/wecom_feedback_sync.py \
+  --chat-type 2 \
+  --chatid "group_chat_id" \
+  --begin-time "2026-05-09 00:00:00" \
+  --end-time "2026-05-10 23:59:59"
+```
+
+实际写入 `HR面评记录表` 并在明确匹配时同步候选人阶段：
+
+```bash
+python3 {baseDir}/scripts/wecom_feedback_sync.py \
+  --messages-json "/path/to/messages.json" \
+  --apply
+```
+
+### 面评字段
+
+`HR面评记录表` 独立保存：
+
+| 字段 | 说明 |
+|------|------|
+| feedback_id | 面评记录唯一标识 |
+| candidate_name | 候选人姓名 |
+| candidate_record_id | 候选人库记录ID |
+| job_id | 关联岗位ID |
+| interviewer_name | 面试官姓名 |
+| interview_time | 面试时间 |
+| interview_mode | 面试方式 |
+| interview_round | 面试轮次 |
+| interviewer_feedback | 面试官面评正文 |
+| interviewer_score | 面试官评分，默认 1-5 分 |
+| interviewer_notes | 面试官补充备注 |
+| decision | 通过/需复试/待定/不通过 |
+| next_action | 建议下一步动作 |
+| source_message_id | 来源企业微信消息ID或稳定生成ID |
+| source_conversation_id | 来源企业微信会话ID |
+| source_message_time | 来源消息时间 |
+| sync_status | 已预览/已同步/已记录/需人工确认/同步失败 |
+| created_at | 创建时间 |
+| updated_at | 更新时间 |
 
 ## 依赖策略
 

@@ -20,6 +20,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 import resume_extract  # noqa: E402
+import wecom_cli  # noqa: E402
 
 
 @dataclass
@@ -241,6 +242,39 @@ def build_candidate_search_checks(probe_remote: bool = False) -> list[Check]:
     return build_tencent_docs_checks(probe_remote=probe_remote)
 
 
+def build_wecom_checks(probe_remote: bool = False, needs_tencent_docs: bool = False) -> list[Check]:
+    status = wecom_cli.probe_wecom_cli()
+    wecom_auth_ready = False
+    wecom_auth_detail = "未远程探测；首次使用请运行 wecom-cli init。"
+    if probe_remote and status.available:
+        try:
+            result = wecom_cli.run_wecom_cli("contact", "get_userlist", {}, timeout_seconds=15)
+            users = result.get("userlist") or []
+            wecom_auth_ready = True
+            wecom_auth_detail = f"已授权；当前可见通讯录成员 {len(users)} 人"
+        except Exception as exc:
+            wecom_auth_detail = f"远程探测失败：{str(exc)[:300]}"
+    elif probe_remote:
+        wecom_auth_detail = "wecom-cli 不可用，无法远程探测授权。"
+    checks = [
+        Check(
+            "wecom_cli.command",
+            status.available,
+            status.detail if status.command is None else f"{status.command} - {status.detail}",
+            required=True,
+        ),
+        Check(
+            "wecom_cli.auth",
+            wecom_auth_ready,
+            wecom_auth_detail,
+            required=probe_remote,
+        ),
+    ]
+    if needs_tencent_docs:
+        checks.extend(build_tencent_docs_checks(probe_remote=probe_remote))
+    return checks
+
+
 def build_payload(
     workflow: str,
     probe_path: Path | None = None,
@@ -250,6 +284,12 @@ def build_payload(
     if workflow in {"candidate-upload", "job-management", "candidate-search"}:
         checks = build_tencent_docs_checks(probe_remote=probe_remote)
         probe = None  # 腾讯文档写入类工作流不需要文件探测
+    elif workflow == "wecom-notify":
+        checks = build_wecom_checks(probe_remote=probe_remote, needs_tencent_docs=False)
+        probe = None
+    elif workflow == "wecom-feedback-sync":
+        checks = build_wecom_checks(probe_remote=probe_remote, needs_tencent_docs=True)
+        probe = None
     else:
         checks = build_resume_ingest_checks()
         probe = probe_file(probe_path, probe_parser) if probe_path else None
@@ -302,7 +342,14 @@ def main() -> int:
     parser.add_argument(
         "--workflow",
         default="resume-ingest",
-        choices=["resume-ingest", "candidate-upload", "job-management", "candidate-search"],
+        choices=[
+            "resume-ingest",
+            "candidate-upload",
+            "job-management",
+            "candidate-search",
+            "wecom-notify",
+            "wecom-feedback-sync",
+        ],
         help="要检查的工作流能力组。",
     )
     parser.add_argument("--probe-file", help="可选：用真实文件做非破坏性解析探测。")

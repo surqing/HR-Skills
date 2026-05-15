@@ -104,11 +104,17 @@ class CandidateSearchTests(unittest.TestCase):
         ]
 
         summary = candidate_search.build_summary(candidates)
+        sensitive_summary = candidate_search.build_summary(candidates, show_sensitive=True)
 
         self.assertEqual(summary["count"], 2)
         self.assertEqual(summary["stage_distribution"]["HR初筛"], 2)
         self.assertEqual(summary["skill_distribution"]["Python"], 2)
         self.assertTrue(summary["duplicate_groups"])
+        self.assertEqual(summary["duplicate_groups"][0]["group_key"], "张*")
+        self.assertEqual(summary["duplicate_groups"][0]["names"], ["张*", "张*"])
+        self.assertNotIn("张三", json.dumps(summary["duplicate_groups"], ensure_ascii=False))
+        self.assertEqual(sensitive_summary["duplicate_groups"][0]["group_key"], "张三")
+        self.assertEqual(sensitive_summary["duplicate_groups"][0]["names"], ["张三", "张三"])
 
     def test_redact_candidate_masks_sensitive_values(self) -> None:
         candidate = {
@@ -127,6 +133,20 @@ class CandidateSearchTests(unittest.TestCase):
         self.assertEqual(redacted["email"], "z***@example.com")
         self.assertEqual(redacted["resume_source"], "***.pdf")
         self.assertEqual(redacted["record_id"], "***-abcdef...")
+
+    def test_candidate_summary_view_masks_record_id(self) -> None:
+        candidate = {
+            "name": "张三",
+            "phone": "13800138000",
+            "email": "zhangsan@example.com",
+            "resume_source": "resume.pdf",
+            "record_id": "张三-abcdef123456",
+        }
+
+        view = candidate_search.candidate_summary_view(candidate)
+
+        self.assertEqual(view["record_id"], "***-abcdef...")
+        self.assertEqual(view["name"], "张*")
 
     def test_main_reads_and_filters_records(self) -> None:
         records = [
@@ -171,7 +191,10 @@ class CandidateSearchTests(unittest.TestCase):
         self.assertEqual(rc, 0)
 
     def test_main_outputs_json(self) -> None:
-        records = [self.make_record(姓名="张三", 电话="13800138000", 邮箱="zhangsan@example.com", 记录ID="张三-aaaa1111")]
+        records = [
+            self.make_record(姓名="张三", 电话="13800138000", 邮箱="zhangsan@example.com", 记录ID="张三-aaaa1111"),
+            self.make_record(姓名="张三", 电话="13800138000", 邮箱="zhangsan@example.com", 记录ID="张三-bbbb2222"),
+        ]
 
         with patch.object(candidate_search, "find_smartsheet_by_title", return_value={"file_id": "file-1"}), \
             patch.object(candidate_search.smartsheet, "list_tables", return_value=[{"sheet_id": "sheet-1", "title": "表"}]), \
@@ -183,7 +206,28 @@ class CandidateSearchTests(unittest.TestCase):
         self.assertEqual(rc, 0)
         payload = json.loads(mock_print.call_args.args[0])
         self.assertEqual(payload["status"], "success")
-        self.assertEqual(payload["summary"]["count"], 1)
+        self.assertEqual(payload["summary"]["count"], 2)
+        self.assertEqual(payload["records"][0]["record_id"], "***-aaaa11...")
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertNotIn("张三", serialized)
+        self.assertNotIn("张三-aaaa1111", serialized)
+        self.assertNotIn("13800138000", serialized)
+
+    def test_main_show_sensitive_keeps_raw_values(self) -> None:
+        records = [self.make_record(姓名="张三", 电话="13800138000", 邮箱="zhangsan@example.com", 记录ID="张三-aaaa1111")]
+
+        with patch.object(candidate_search, "find_smartsheet_by_title", return_value={"file_id": "file-1"}), \
+            patch.object(candidate_search.smartsheet, "list_tables", return_value=[{"sheet_id": "sheet-1", "title": "表"}]), \
+            patch.object(candidate_search.smartsheet, "list_records", return_value=records), \
+            patch.object(sys, "argv", ["candidate_search.py", "--include-all", "--show-sensitive"]):
+            with patch("builtins.print") as mock_print:
+                rc = candidate_search.main()
+
+        self.assertEqual(rc, 0)
+        payload = json.loads(mock_print.call_args.args[0])
+        self.assertFalse(payload["sensitive_values_redacted"])
+        self.assertEqual(payload["records"][0]["name"], "张三")
+        self.assertEqual(payload["records"][0]["record_id"], "张三-aaaa1111")
 
 
 if __name__ == "__main__":

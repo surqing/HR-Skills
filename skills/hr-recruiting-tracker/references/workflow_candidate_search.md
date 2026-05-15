@@ -56,6 +56,8 @@ python3 {baseDir}/scripts/dependency_check.py --workflow candidate-search --prob
 - `records`：命中的候选人明细，默认脱敏
 - `summary`：命中数、阶段分布、技能分布、解析质量分布、缺失字段统计、疑似重复候选人分组
 
+默认输出为排障安全视图；如需查看候选人姓名、联系方式、原始记录 ID 或简历来源，必须显式传入 `--show-sensitive`。
+
 ## 使用示例
 
 按姓名和技能检索：
@@ -79,6 +81,7 @@ python3 {baseDir}/scripts/candidate_search.py --email "zhangsan@example.com" --s
 ## 注意事项
 
 - 默认只读，不写回腾讯文档。
+- 默认输出脱敏后的排障安全视图；完整敏感值只在显式传入 `--show-sensitive` 时输出。
 - 默认去重；如需保留重复命中可传 `--with-duplicates`。
 - 默认返回前 50 条记录；需要完整结果可传 `--include-all`。
 - “分析”仅指结构化统计，不包含生成式长摘要。

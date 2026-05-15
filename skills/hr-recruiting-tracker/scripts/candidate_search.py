@@ -109,7 +109,7 @@ def canonical_field_value(value: Any) -> str:
 def candidate_summary_view(candidate: dict[str, Any]) -> dict[str, Any]:
     resume_source = candidate.get("resume_source")
     return {
-        "record_id": candidate.get("record_id"),
+        "record_id": smartsheet.mask_record_id(candidate.get("record_id")),
         "name": smartsheet.mask_name(candidate.get("name")),
         "phone": smartsheet.mask_phone(candidate.get("phone")),
         "email": smartsheet.mask_email(candidate.get("email")),
@@ -166,7 +166,42 @@ def candidate_identity_key(candidate: dict[str, Any]) -> str:
     return normalize(candidate.get("record_id"))
 
 
-def build_summary(candidates: list[dict[str, Any]]) -> dict[str, Any]:
+def redacted_duplicate_group_key(group_key: str, group: list[dict[str, Any]]) -> str | None:
+    candidate = group[0] if group else {}
+    if normalize(candidate.get("name")) == group_key:
+        return smartsheet.mask_name(candidate.get("name"))
+    if normalize(candidate.get("phone")) == group_key:
+        return smartsheet.mask_phone(candidate.get("phone"))
+    if normalize(candidate.get("email")) == group_key:
+        return smartsheet.mask_email(candidate.get("email"))
+    return smartsheet.mask_record_id(group_key)
+
+
+def duplicate_group_view(group_key: str, group: list[dict[str, Any]], show_sensitive: bool) -> dict[str, Any]:
+    if show_sensitive:
+        return {
+            "group_key": group_key,
+            "count": len(group),
+            "record_ids": [item.get("record_id") for item in group if item.get("record_id")],
+            "names": [item.get("name") for item in group if item.get("name")],
+        }
+    return {
+        "group_key": redacted_duplicate_group_key(group_key, group),
+        "count": len(group),
+        "record_ids": [
+            smartsheet.mask_record_id(item.get("record_id"))
+            for item in group
+            if item.get("record_id")
+        ],
+        "names": [
+            smartsheet.mask_name(item.get("name"))
+            for item in group
+            if item.get("name")
+        ],
+    }
+
+
+def build_summary(candidates: list[dict[str, Any]], show_sensitive: bool = False) -> dict[str, Any]:
     stage_counter = Counter()
     skill_counter = Counter()
     quality_counter = Counter()
@@ -187,12 +222,7 @@ def build_summary(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         duplicate_groups[candidate_identity_key(candidate)].append(candidate)
 
     duplicates = [
-        {
-            "group_key": key,
-            "count": len(group),
-            "record_ids": [item.get("record_id") for item in group if item.get("record_id")],
-            "names": [item.get("name") for item in group if item.get("name")],
-        }
+        duplicate_group_view(key, group, show_sensitive=show_sensitive)
         for key, group in duplicate_groups.items()
         if key and len(group) > 1
     ]
@@ -260,7 +290,7 @@ def main() -> int:
             deduped.append(candidate)
         matched = deduped
 
-    summary = build_summary(summary_candidates)
+    summary = build_summary(summary_candidates, show_sensitive=args.show_sensitive)
     total_count = len(summary_candidates)
     if not args.include_all and args.limit >= 0:
         matched = matched[: args.limit]
